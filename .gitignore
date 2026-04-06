@@ -1,0 +1,24 @@
+# Environment & secrets
+backend/.env
+
+# Database
+backend/drishti.db
+
+# Uploaded photos
+backend/uploads/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Node modules
+node_modules/
+
+# Build output
+frontend/projectx/dist/
+frontend/projectx/build/
+
+# OS files
+.DS_Store
+Thumbs.db
