@@ -22,3 +22,6 @@ frontend/projectx/build/
 # OS files
 .DS_Store
 Thumbs.db
+
+
+frontend/.env
