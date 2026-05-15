@@ -1,4 +1,4 @@
-@"
+
 # DrishtiAI 🔍
 
 **Team:** PowerPuff_Boys  
@@ -72,7 +72,7 @@ npm run dev
 
 ---
 
-## ⚠️ Note
+##  Note
 
 \`.env\` file (containing API keys) is excluded from this repo for security.  
 Create your own \`.env\` in \`backend/\` with:
