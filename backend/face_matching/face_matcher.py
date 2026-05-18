@@ -272,20 +272,32 @@ class FaceMatcher:
             "raw_img": raw,
         }
 
-        # DeepFace embedding
-        ref["deepface"] = _embed_deepface(ref_path)
+        # Save preprocessed image to a temp file so DeepFace uses
+        # the SAME version of the image as InsightFace (fixes embedding drift)
+        import tempfile
+        _tmp_ref = tempfile.mktemp(suffix=".jpg")
+        cv2.imwrite(_tmp_ref, raw)
+
+        # DeepFace embedding (from preprocessed temp file)
+        ref["deepface"] = _embed_deepface(_tmp_ref)
         if ref["deepface"] is not None:
             log.info("Reference: DeepFace embedding extracted ✓")
         else:
             log.warning("Reference: DeepFace embedding failed.")
 
-        # InsightFace embedding
+        # InsightFace embedding (from preprocessed numpy array)
         insight_result = _embed_insightface(raw)
         if insight_result is not None:
             ref["insightface"] = insight_result[0]
             log.info("Reference: InsightFace embedding extracted ✓")
         else:
             log.warning("Reference: InsightFace embedding failed.")
+
+        # Clean up temp file
+        try:
+            os.remove(_tmp_ref)
+        except Exception:
+            pass
 
         if ref["deepface"] is None and ref["insightface"] is None:
             log.warning("Reference: No deep-learning embedding; "
@@ -321,7 +333,16 @@ class FaceMatcher:
 
         # ── Engine 1: DeepFace ────────────────────────────────────────────────
         if ref["deepface"] is not None and DEEPFACE_AVAILABLE:
-            s_emb = _embed_deepface(sighting_path)
+            # Write preprocessed image to temp file so DeepFace uses
+            # the same preprocessed version as InsightFace
+            import tempfile
+            _tmp_sight = tempfile.mktemp(suffix=".jpg")
+            cv2.imwrite(_tmp_sight, img)
+            s_emb = _embed_deepface(_tmp_sight)
+            try:
+                os.remove(_tmp_sight)
+            except Exception:
+                pass
             if s_emb is not None:
                 score = _cosine_similarity(ref["deepface"], s_emb)
                 scores.append(score)
@@ -370,8 +391,9 @@ class FaceMatcher:
                 face_loc = detected
 
         # ── Aggregate & scale ─────────────────────────────────────────────────
-        # Average scores from all successful engines, then scale to 0-100
-        confidence_raw = float(np.mean(scores))
+        # Take the BEST score across engines (max not mean) so a good match
+        # from one engine isn't dragged down by a weaker result from another
+        confidence_raw = float(np.max(scores))
         confidence_pct = round(confidence_raw * 100, 2)
 
         # Default face_loc if nothing detected
