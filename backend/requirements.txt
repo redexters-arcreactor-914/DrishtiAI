@@ -1,39 +1,20 @@
-# requirements.txt
-opencv-python>=4.8.0
-numpy>=1.24.0
-deepface>=0.0.79
-insightface>=0.7.3
-onnxruntime>=1.16.0       # InsightFace backend
-pytest>=7.4.0
+# ── Core (required) ───────────────────────────────────────────────────────────
+flask>=3.0
+flask-cors>=4.0
+python-dotenv>=1.0
+requests>=2.31
+numpy>=1.24
+opencv-python>=4.8,<5      # OpenCV 5 removed CascadeClassifier (Haar fallback)
+folium>=0.16               # Live map
+geopy>=2.4                 # Online geocoding (offline gazetteer used as fallback)
 
-# requirements.txt
-# Missing Persons Tracking System — NLP + Map modules
-# Python 3.13 compatible
+# ── Face recognition engines (recommended) ────────────────────────────────────
+# Without these the matcher falls back to colour histograms, which are NOT
+# face recognition — results are flagged "low reliability" in the UI.
+deepface>=0.0.93
+tf-keras>=2.16             # required by DeepFace with TensorFlow >= 2.16
+# InsightFace is optional; it needs a C++ compiler on Windows.
+#   pip install insightface onnxruntime
 
-# Core
-requests>=2.31.0          # Gemini REST API calls (no heavy SDK)
-python-dotenv>=1.0.0      # .env file loading for API key
-
-# Map visualisation
-folium>=0.15.0            # Interactive Leaflet.js maps
-
-# Geocoding (optional but recommended)
-geopy>=2.4.0              # Nominatim geocoding for city → lat/lng
-
-# NLP (optional — used for pre-validation in extractor)
-spacy>=3.7.0              # Named entity recognition pre-pass
-# After installing spacy, also run:
-#   python -m spacy download en_core_web_sm
-
-
-
-flask>=3.0.0
-flask-cors>=4.0.0
-folium>=0.16.0
-
-# Add when wiring real modules:
-# deepface>=0.0.90
-# insightface>=0.7.3
-# spacy>=3.7.0
-# geopy>=2.4.0
-
+# ── Dev ───────────────────────────────────────────────────────────────────────
+pytest>=7.4

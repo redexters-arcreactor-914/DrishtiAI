@@ -21,6 +21,7 @@ Created: 2026
 import os
 import json
 import logging
+import threading
 import traceback
 from pathlib import Path
 from typing import Optional, Union
@@ -41,18 +42,18 @@ try:
     from deepface import DeepFace
     DEEPFACE_AVAILABLE = True
     log.info("DeepFace loaded ✓")
-except ImportError:
+except Exception as _e:  # TF/keras version clashes raise ValueError, not ImportError
+    log.warning(f"DeepFace unavailable: {_e}")
     DEEPFACE_AVAILABLE = False
-    log.warning("DeepFace not installed — will skip primary engine.")
 
 try:
     import insightface
     from insightface.app import FaceAnalysis
     INSIGHTFACE_AVAILABLE = True
     log.info("InsightFace loaded ✓")
-except ImportError:
+except Exception as _e:
+    log.warning(f"InsightFace unavailable: {_e}")
     INSIGHTFACE_AVAILABLE = False
-    log.warning("InsightFace not installed — will skip fallback engine.")
 
 # ── Supported image extensions ────────────────────────────────────────────────
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff"}
@@ -70,8 +71,13 @@ def _load_image(path: str) -> Optional[np.ndarray]:
     img = cv2.imread(path)
     if img is None:
         # cv2.imread silently returns None for unicode paths on some OS
-        raw = np.frombuffer(open(path, "rb").read(), dtype=np.uint8)
-        img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        try:
+            with open(path, "rb") as fh:
+                raw = np.frombuffer(fh.read(), dtype=np.uint8)
+            if raw.size:
+                img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        except (OSError, cv2.error):
+            img = None
     return img
 
 
@@ -110,9 +116,14 @@ def _detect_face_opencv(img: np.ndarray) -> Optional[tuple]:
     Returns (x, y, w, h) of the largest detected face, or None.
     Used when deep-learning detectors fail.
     """
+    # OpenCV 5.x dropped CascadeClassifier from the main module.
+    if not hasattr(cv2, "CascadeClassifier") or not hasattr(cv2, "data"):
+        return None
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     detector = cv2.CascadeClassifier(cascade_path)
+    if detector.empty():
+        return None
     faces = detector.detectMultiScale(gray, scaleFactor=1.1,
                                       minNeighbors=4, minSize=(30, 30))
     if len(faces) == 0:
@@ -178,26 +189,39 @@ def _get_insight_app() -> Optional["FaceAnalysis"]:
 # Per-engine embedding extractors
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _embed_deepface(img_path: str) -> Optional[np.ndarray]:
+DEEPFACE_DETECTOR = os.getenv("DEEPFACE_DETECTOR", "retinaface")
+
+
+def _embed_deepface(img: np.ndarray) -> Optional[tuple]:
     """
-    Extract a 512-d ArcFace embedding using DeepFace.
-    DeepFace handles alignment internally.
-    Returns numpy array or None on any failure.
+    Extract an ArcFace embedding using DeepFace.
+    Returns (embedding, (x, y, w, h)) or None if no face was found.
+
+    enforce_detection=False makes DeepFace embed the *whole image* when it
+    finds no face (face_confidence == 0). Such embeddings are meaningless and
+    used to produce false matches, so they are rejected here.
     """
     if not DEEPFACE_AVAILABLE:
         return None
     try:
         result = DeepFace.represent(
-            img_path=img_path,
-            model_name="ArcFace",       # best accuracy / speed trade-off
-            detector_backend="retinaface",
-            enforce_detection=False,    # don't crash on partial / occluded faces
+            img_path=img,               # numpy BGR array — no temp files needed
+            model_name="ArcFace",
+            detector_backend=DEEPFACE_DETECTOR,
+            enforce_detection=False,
             align=True,
         )
-        if result:
-            return np.array(result[0]["embedding"], dtype=np.float32)
+        if not result:
+            return None
+        best = max(result, key=lambda r: r.get("face_confidence", 0) or 0)
+        if (best.get("face_confidence") or 0) <= 0:
+            return None
+        fa = best.get("facial_area", {}) or {}
+        loc = (int(fa.get("x", 0)), int(fa.get("y", 0)),
+               int(fa.get("w", 0)), int(fa.get("h", 0)))
+        return np.array(best["embedding"], dtype=np.float32), loc
     except Exception as exc:
-        log.debug(f"DeepFace embed failed for {img_path}: {exc}")
+        log.debug(f"DeepFace embed failed: {exc}")
     return None
 
 
@@ -235,16 +259,19 @@ class FaceMatcher:
     ----------
     threshold : float
         Minimum confidence (0–1) to include a sighting in results.
-        Default 0.6 (60 %).
+        Default 0.4 — ArcFace cosine similarity for the same person is
+        typically 0.4–0.8, for different people usually below 0.3.
     top_k : int
         Maximum number of ranked results to return. Default 5.
     """
 
-    def __init__(self, threshold: float = 0.6, top_k: int = 5):
+    def __init__(self, threshold: float = 0.4, top_k: int = 5):
         if not 0 <= threshold <= 1:
             raise ValueError("threshold must be in [0, 1]")
         self.threshold = threshold
         self.top_k = top_k
+        self._ref_cache: dict = {}
+        self._lock = threading.Lock()
         log.info(f"FaceMatcher ready | threshold={threshold} | top_k={top_k}")
 
     # ── Reference embedding ───────────────────────────────────────────────────
@@ -272,14 +299,9 @@ class FaceMatcher:
             "raw_img": raw,
         }
 
-        # Save preprocessed image to a temp file so DeepFace uses
-        # the SAME version of the image as InsightFace (fixes embedding drift)
-        import tempfile
-        _tmp_ref = tempfile.mktemp(suffix=".jpg")
-        cv2.imwrite(_tmp_ref, raw)
-
-        # DeepFace embedding (from preprocessed temp file)
-        ref["deepface"] = _embed_deepface(_tmp_ref)
+        # DeepFace embedding (from the same preprocessed array as InsightFace)
+        df = _embed_deepface(raw)
+        ref["deepface"] = df[0] if df else None
         if ref["deepface"] is not None:
             log.info("Reference: DeepFace embedding extracted ✓")
         else:
@@ -292,12 +314,6 @@ class FaceMatcher:
             log.info("Reference: InsightFace embedding extracted ✓")
         else:
             log.warning("Reference: InsightFace embedding failed.")
-
-        # Clean up temp file
-        try:
-            os.remove(_tmp_ref)
-        except Exception:
-            pass
 
         if ref["deepface"] is None and ref["insightface"] is None:
             log.warning("Reference: No deep-learning embedding; "
@@ -333,36 +349,12 @@ class FaceMatcher:
 
         # ── Engine 1: DeepFace ────────────────────────────────────────────────
         if ref["deepface"] is not None and DEEPFACE_AVAILABLE:
-            # Write preprocessed image to temp file so DeepFace uses
-            # the same preprocessed version as InsightFace
-            import tempfile
-            _tmp_sight = tempfile.mktemp(suffix=".jpg")
-            cv2.imwrite(_tmp_sight, img)
-            s_emb = _embed_deepface(_tmp_sight)
-            try:
-                os.remove(_tmp_sight)
-            except Exception:
-                pass
-            if s_emb is not None:
+            df = _embed_deepface(img)
+            if df is not None:
+                s_emb, face_loc = df
                 score = _cosine_similarity(ref["deepface"], s_emb)
-                scores.append(score)
+                scores.append(max(0.0, score))
                 engines_used.append("deepface")
-
-                # Try to get face location from DeepFace facial area
-                try:
-                    det = DeepFace.extract_faces(
-                        img_path=sighting_path,
-                        detector_backend="retinaface",
-                        enforce_detection=False,
-                    )
-                    if det:
-                        fa = det[0].get("facial_area", {})
-                        face_loc = (
-                            fa.get("x", 0), fa.get("y", 0),
-                            fa.get("w", 0), fa.get("h", 0),
-                        )
-                except Exception:
-                    pass
 
         # ── Engine 2: InsightFace ─────────────────────────────────────────────
         if ref["insightface"] is not None and INSIGHTFACE_AVAILABLE:
@@ -370,7 +362,7 @@ class FaceMatcher:
             if insight_result is not None:
                 s_emb, bbox = insight_result
                 score = _cosine_similarity(ref["insightface"], s_emb)
-                scores.append(score)
+                scores.append(max(0.0, score))
                 engines_used.append("insightface")
 
                 # bbox is (x1,y1,x2,y2) → convert to (x,y,w,h)
@@ -379,11 +371,16 @@ class FaceMatcher:
                     face_loc = (x1, y1, x2 - x1, y2 - y1)
 
         # ── Engine 3: Histogram fallback ──────────────────────────────────────
+        # Colour histograms are NOT face recognition: two photos with similar
+        # lighting score high regardless of who is in them. Scores are capped
+        # at 0.5 and flagged so the UI can warn the operator.
+        low_reliability = False
         if not scores:
             log.debug(f"Falling back to histogram for {sighting_path}")
             score = _histogram_similarity(ref["raw_img"], img)
-            scores.append(score * 0.7)   # dampen histogram confidence
+            scores.append(score * 0.5)
             engines_used.append("histogram")
+            low_reliability = True
 
             # Try OpenCV Haar for face location
             detected = _detect_face_opencv(img)
@@ -413,9 +410,49 @@ class FaceMatcher:
                 "height": face_loc[3],
             },
             "engines_used": engines_used,
+            "low_reliability": low_reliability,
         }
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    def _cached_reference(self, ref_path: str) -> dict:
+        """Reference embeddings are expensive; cache by (path, mtime)."""
+        key = (os.path.abspath(ref_path), os.path.getmtime(ref_path))
+        with self._lock:
+            ref = self._ref_cache.get(key)
+        if ref is None:
+            ref = self._build_reference(ref_path)
+            with self._lock:
+                if len(self._ref_cache) > 32:
+                    self._ref_cache.clear()
+                self._ref_cache[key] = ref
+        return ref
+
+    def compare_files(self, reference_image: str, sighting_paths: list,
+                      apply_threshold: bool = True) -> list:
+        """
+        Compare a reference image against an explicit list of image paths.
+        Returns every result (sorted, highest first); each has `is_match`.
+        """
+        if not os.path.isfile(reference_image):
+            raise FileNotFoundError(f"Reference image not found: {reference_image}")
+        ref = self._cached_reference(reference_image)
+        results = []
+        for path in sighting_paths:
+            try:
+                r = self._compare_one(path, ref)
+            except Exception:
+                log.error(f"Unexpected error on {path}:\n{traceback.format_exc()}")
+                continue
+            if r is None:
+                continue
+            r["is_match"] = (r["confidence_raw"] >= self.threshold
+                             and not r["low_reliability"])
+            if apply_threshold and r["confidence_raw"] < self.threshold:
+                continue
+            results.append(r)
+        results.sort(key=lambda r: r["confidence"], reverse=True)
+        return results
 
     def match(
         self,
@@ -458,7 +495,8 @@ class FaceMatcher:
         log.info(f"Found {len(sighting_paths)} sighting image(s) to scan.")
 
         # --- Build reference embeddings once ---
-        ref = self._build_reference(reference_image)
+        ref = self._cached_reference(reference_image) \
+            if os.path.isfile(reference_image) else self._build_reference(reference_image)
 
         # --- Compare every sighting ---
         results = []

@@ -11,6 +11,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { Link } from "react-router-dom";
+import api from "../api";
+
+// Local (not UTC) YYYY-MM-DD — toISOString() gives yesterday's date in IST before 05:30
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const T = {
@@ -305,6 +313,9 @@ function validate(fields, photo) {
   if (!fields.gender)                        errors.gender      = "Select a gender";
   if (!fields.lastSeenLocation.trim())       errors.lastSeenLocation = "Location is required";
   if (!fields.dateLastSeen)                  errors.dateLastSeen = "Date is required";
+  else if (fields.dateLastSeen > todayLocal()) errors.dateLastSeen = "Date cannot be in the future";
+  if (fields.contact.trim() && !/^[+\d][\d\s-]{6,17}$/.test(fields.contact.trim()))
+                                             errors.contact     = "Enter a valid phone number";
   return errors;
 }
 
@@ -312,7 +323,7 @@ function validate(fields, photo) {
 export default function CaseRegistration() {
   const EMPTY = {
     fullName: "", age: "", gender: "",
-    lastSeenLocation: "", dateLastSeen: "", description: "",
+    lastSeenLocation: "", dateLastSeen: "", description: "", contact: "",
   };
 
   const [fields, setFields]       = useState(EMPTY);
@@ -368,41 +379,26 @@ export default function CaseRegistration() {
     setLoading(true);
     setErrors({});
 
-    // Build real multipart FormData — NOT JSON.stringify
-    const fd = new FormData();
-    fd.append("photo",            photo);
-    fd.append("name",         fields.fullName.trim());
-    fd.append("age",              fields.age);
-    fd.append("gender",           fields.gender);
-    fd.append("lastSeenLocation", fields.lastSeenLocation.trim());
-    fd.append("dateLastSeen",     fields.dateLastSeen);
-    fd.append("description",      fields.description.trim());
+    const data = {
+      name:             fields.fullName.trim(),
+      age:              fields.age,
+      gender:           fields.gender,
+      lastSeenLocation: fields.lastSeenLocation.trim(),
+      dateLastSeen:     fields.dateLastSeen,
+      description:      fields.description.trim(),
+      contact:          fields.contact.trim(),
+    };
 
     try {
-      const res = await fetch("http://127.0.0.1:5000/api/register", {
-        method: "POST",
-        body: fd,
-        // ⚠️  Do NOT set Content-Type manually — browser sets it with boundary
-      });
-
-      if (!res.ok) {
-        // Try to parse error body
-        let msg = `Server error (${res.status})`;
-        try {
-          const data = await res.json();
-          msg = data.message || data.error || msg;
-        } catch {}
-        throw new Error(msg);
-      }
-
-      const data = await res.json();
-      const newCaseId = data.caseId || data.id || `MP-${Date.now()}`;
+      const res = await api.registerCase(data, photo);
+      const newCaseId = res.case_id || res.caseId;
+      if (!newCaseId) throw new Error("Server did not return a case ID");
       setCaseId(newCaseId);
 
       addToast(
         "success",
         "Case Registered",
-        `Case #${newCaseId} has been created and queued for AI processing.`,
+        `Case #${newCaseId.slice(0, 8)} created. Link sightings to it from the Sighting Feed.`,
         7000
       );
 
@@ -499,6 +495,9 @@ export default function CaseRegistration() {
               <span style={{ fontFamily: T.mono, fontSize: 10, color: T.green, letterSpacing: "0.08em" }}>
                 LAST REGISTERED: {caseId}
               </span>
+              <Link to="/sightings" style={{ fontFamily: T.mono, fontSize: 10, color: T.txt2, marginLeft: 6 }}>
+                ADD SIGHTING →
+              </Link>
             </div>
           )}
         </div>
@@ -662,13 +661,29 @@ export default function CaseRegistration() {
                   <input
                     id="dateLastSeen" name="dateLastSeen" type="date"
                     value={fields.dateLastSeen} onChange={handleChange}
-                    max={new Date().toISOString().split("T")[0]}
+                    max={todayLocal()}
                     style={{
                       ...fieldStyle("dateLastSeen"),
                       colorScheme: "dark",
                     }}
                   />
                   <ErrMsg field="dateLastSeen" />
+                </div>
+
+                {/* Contact */}
+                <div className="cr-field-wrap" style={{ marginBottom: 16 }}>
+                  <Label htmlFor="contact">
+                    Family Contact{" "}
+                    <span style={{ color: T.txt3, fontWeight: 400, textTransform: "none", fontSize: 9 }}>(optional)</span>
+                  </Label>
+                  <input
+                    id="contact" name="contact" type="tel"
+                    value={fields.contact} onChange={handleChange}
+                    placeholder="e.g. +91 98765 43210"
+                    style={fieldStyle("contact")}
+                    autoComplete="off"
+                  />
+                  <ErrMsg field="contact" />
                 </div>
 
                 {/* Description */}

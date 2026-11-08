@@ -5,6 +5,20 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
+/* Tailwind utilities — used by SightingFeed / MatchResults / CasesList.
+   (They were used before but Tailwind was never installed, so those pages
+   rendered unstyled.) Preflight is off, so we add the one bit of it that
+   utilities like `border` / `border-b` need to be visible. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*, ::before, ::after {
+  border-width: 0;
+  border-style: solid;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 /* ── CSS Custom Properties ─────────────────────────────────── */
 :root {
   /* Core palette */

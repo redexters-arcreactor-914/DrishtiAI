@@ -4,7 +4,7 @@
 // Uses React Router v6 NavLink for active-state detection.
 // ============================================================
 
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 
 // ── SVG Icons (inline, no external deps) ─────────────────────
@@ -42,8 +42,17 @@ const IconMap = () => (
   </svg>
 );
 
-const IconShield = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+const IconCases = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+    <circle cx="9" cy="7" r="4"/>
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </svg>
+);
+
+const IconShield = (props) => (
+  <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
     <line x1="12" y1="8" x2="12" y2="12"/>
     <line x1="12" y1="16" x2="12.01" y2="16"/>
@@ -60,10 +69,17 @@ const NAV_ITEMS = [
     end: true,   // exact match for root
   },
   {
+    to: '/cases',
+    label: 'Cases',
+    Icon: IconCases,
+    badge: null,
+    end: false,
+  },
+  {
     to: '/sightings',
     label: 'Sighting Feed',
     Icon: IconSightings,
-    badge: '3',
+    badge: null,
     end: false,
   },
   {
@@ -104,16 +120,12 @@ function useClock() {
 }
 
 // ── Component ─────────────────────────────────────────────────
-export default function Sidebar() {
-  const location = useLocation();
+export default function Sidebar({ health }) {
   const clock = useClock();
-
-  // derive current page name for display
-  const currentPage = NAV_ITEMS.find(item =>
-    item.end
-      ? location.pathname === item.to
-      : location.pathname.startsWith(item.to)
-  )?.label ?? 'Dashboard';
+  const online = !!health;
+  const statusText = health === null || health === undefined
+    ? 'CONNECTING…'
+    : online ? 'SYSTEMS NOMINAL' : 'BACKEND OFFLINE';
 
   return (
     <aside className="sidebar noise" aria-label="Primary navigation">
@@ -121,7 +133,7 @@ export default function Sidebar() {
       {/* ── Brand ──────────────────────────────────────────── */}
       <div className="sidebar-brand">
         <div className="sidebar-brand-eyebrow">
-          System Active
+          DrishtiAI
         </div>
         <div className="sidebar-brand-title">
           MISSING<br />
@@ -133,8 +145,14 @@ export default function Sidebar() {
 
         {/* Live status */}
         <div className="sidebar-status" role="status" aria-live="polite">
-          <div className="sidebar-status-dot" aria-hidden="true" />
-          <span className="sidebar-status-text">SYSTEMS NOMINAL</span>
+          <div
+            className="sidebar-status-dot"
+            aria-hidden="true"
+            style={online ? undefined : { background: health === false ? '#e63946' : '#8888aa', boxShadow: 'none' }}
+          />
+          <span className="sidebar-status-text" style={online ? undefined : { color: health === false ? '#e63946' : '#8888aa' }}>
+            {statusText}
+          </span>
         </div>
       </div>
 
@@ -152,7 +170,6 @@ export default function Sidebar() {
             className={({ isActive }) =>
               `nav-item${isActive ? ' active' : ''}`
             }
-            aria-current={({ isActive }) => isActive ? 'page' : undefined}
           >
             {({ isActive }) => (
               <>
@@ -240,7 +257,7 @@ export default function Sidebar() {
           FOR AUTHORIZED USE ONLY
         </div>
         <div className="sidebar-footer-meta">
-          © 2024 NATIONAL MISSING PERSONS BUREAU
+          DRISHTI AI · PROTOTYPE
         </div>
       </footer>
     </aside>

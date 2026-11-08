@@ -36,7 +36,7 @@ def parse_args():
                    help="Folder of sighting images to scan")
     p.add_argument("--output",     default="results/matches.json",
                    help="Output JSON file path")
-    p.add_argument("--threshold",  type=float, default=0.6,
+    p.add_argument("--threshold",  type=float, default=0.4,
                    help="Minimum confidence score (0.0–1.0)")
     p.add_argument("--top-k",      type=int,   default=5,
                    help="Maximum number of top matches to return")

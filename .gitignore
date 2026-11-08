@@ -24,4 +24,9 @@ frontend/projectx/build/
 Thumbs.db
 
 
-frontend/.env
+frontend/projectx/.env
+# Generated outputs
+backend/map.html
+backend/test_results.json
+backend/nlp_geo/test_results.json
+backend/face_matching/results/
