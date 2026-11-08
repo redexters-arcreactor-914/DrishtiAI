@@ -172,10 +172,16 @@ def _call_gemini(text: str) -> dict:
             text=text, today=datetime.now().strftime("%Y-%m-%d (%A)"))}]}],
         "generationConfig": {
             "temperature": 0.1,
-            "maxOutputTokens": 1024,
+            # Gemini 2.5 "thinking" tokens count against maxOutputTokens; with
+            # a small limit the model can spend it all thinking and return no
+            # text at all. Extraction doesn't need thinking, so turn it off
+            # (where supported) and leave generous headroom.
+            "maxOutputTokens": 4096,
             "responseMimeType": "application/json",
         },
     }
+    if "2.5" in GEMINI_MODEL and "pro" not in GEMINI_MODEL:
+        payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
 
     for attempt in range(2):
         _throttle()
@@ -195,22 +201,46 @@ def _call_gemini(text: str) -> dict:
             log.warning("Gemini 429 — retrying once in 3s")
             time.sleep(3)
             continue
-        if resp.status_code in (401, 403):
-            raise RuntimeError("Gemini rejected the API key (check GEMINI_API_KEY)")
-        if resp.status_code == 404:
-            raise RuntimeError(
-                f"Gemini model '{GEMINI_MODEL}' not found — set GEMINI_MODEL in .env")
         if not resp.ok:
-            raise RuntimeError(f"Gemini API HTTP {resp.status_code}")
+            detail = _api_error_message(resp)
+            if resp.status_code in (401, 403) or "API key" in detail:
+                raise RuntimeError(f"Gemini rejected the API key: {detail}")
+            if resp.status_code == 404:
+                raise RuntimeError(
+                    f"Gemini model '{GEMINI_MODEL}' not found — set GEMINI_MODEL in .env")
+            if resp.status_code == 429:
+                raise RuntimeError(f"Gemini quota/rate limit exceeded: {detail}")
+            raise RuntimeError(f"Gemini API HTTP {resp.status_code}: {detail}")
         break
 
     try:
         data = resp.json()
-        parts = data["candidates"][0]["content"]["parts"]
-        raw_text = "".join(p.get("text", "") for p in parts)
+    except ValueError:
+        raise RuntimeError("Gemini returned a non-JSON HTTP response")
+
+    if not data.get("candidates"):
+        reason = (data.get("promptFeedback") or {}).get("blockReason", "no candidates")
+        raise RuntimeError(f"Gemini returned no answer ({reason})")
+    cand = data["candidates"][0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    raw_text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+    if not raw_text.strip():
+        raise RuntimeError(
+            f"Gemini returned an empty answer (finishReason={cand.get('finishReason')})")
+    try:
         return _parse_json_loose(raw_text)
-    except (KeyError, IndexError, ValueError) as e:
-        raise RuntimeError(f"Unexpected Gemini response: {e}")
+    except ValueError:
+        raise RuntimeError(
+            f"Gemini answer was not valid JSON (finishReason={cand.get('finishReason')})")
+
+
+def _api_error_message(resp) -> str:
+    """Pull Google's human-readable error message out of an error response."""
+    try:
+        msg = resp.json().get("error", {}).get("message", "")
+    except ValueError:
+        msg = resp.text[:200]
+    return (msg or f"HTTP {resp.status_code}").strip()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -468,7 +498,7 @@ def extract_sighting(text: str, person_id: str = "UNKNOWN") -> dict:
     except Exception as e:
         warning = f"{e} — used offline extractor"
         engine = "offline"
-        log.info(f"Gemini unavailable ({e}); using offline extractor")
+        log.warning(f"Gemini unavailable ({e}); using offline extractor")
         extracted = _offline_extract(text)
 
     result = _build_flat_output(extracted, text)
