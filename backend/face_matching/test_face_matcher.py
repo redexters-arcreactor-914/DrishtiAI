@@ -195,7 +195,7 @@ class TestOpenCVDetector:
 class TestFaceMatcherInit:
     def test_default_params(self):
         m = FaceMatcher()
-        assert m.threshold == 0.6
+        assert m.threshold == 0.4
         assert m.top_k == 5
 
     def test_custom_params(self):

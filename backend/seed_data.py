@@ -1,12 +1,14 @@
 """
 seed_data.py — populates DrishtiAI with realistic synthetic data for demo.
-Run from backend/ directory: py -3.10 seed_data.py
+Run: python seed_data.py            (from any directory)
+     python seed_data.py --force    (wipe existing data first)
 """
-import sqlite3, uuid, json, random
-from datetime import datetime, timedelta
+import os, sys, sqlite3, uuid, json, random
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DB_PATH = Path("drishti.db")
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = Path(os.getenv("DRISHTI_DB", BASE_DIR / "drishti.db"))
 
 CASES = [
     {"name": "Ravi Kumar Sharma", "age": 34, "gender": "Male",
@@ -30,7 +32,7 @@ CASES = [
 SIGHTINGS = [
     # Ravi Kumar sightings (index 0)
     {"raw_text": "I saw a man matching the description near Assi Ghat around 3pm today, he was asking for directions to Allahabad",
-     "location": "Assi Ghat, Varanasi", "latitude": 25.2677, "longitude": 82.9913,
+     "location": "Assi Ghat, Varanasi", "latitude": 25.2867, "longitude": 83.0068,
      "sighted_at": "2025-04-02T15:00:00", "confidence": 0.72},
     {"raw_text": "A man in grey kurta was spotted at Prayagraj railway station tea stall, seemed confused and disoriented",
      "location": "Prayagraj Junction", "latitude": 25.4484, "longitude": 81.8322,
@@ -78,22 +80,27 @@ MATCHES = [
 
 def new_id(): return str(uuid.uuid4())
 def ts(offset_hours=0):
-    return (datetime.utcnow() - timedelta(hours=offset_hours)).isoformat(timespec="seconds") + "Z"
+    return (datetime.now(timezone.utc) - timedelta(hours=offset_hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def seed():
-    if not DB_PATH.exists():
-        print("ERROR: drishti.db not found. Run app.py first to create the DB.")
-        return
+def _init_schema():
+    """Create/migrate tables using the same schema as app.py."""
+    sys.path.insert(0, str(BASE_DIR))
+    from app import init_db
+    init_db(DB_PATH)
 
+def seed(force=False):
+    _init_schema()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
-    # Check if already seeded
     existing = conn.execute("SELECT COUNT(*) FROM cases").fetchone()[0]
-    if existing > 0:
-        print(f"DB already has {existing} case(s). Delete drishti.db and re-run app.py to start fresh, or set FORCE=True.")
+    if existing > 0 and not force:
+        print(f"DB already has {existing} case(s). Run with --force to wipe and re-seed.")
         conn.close()
         return
+    if force:
+        for t in ("matches", "sightings", "cases", "audit_log"):
+            conn.execute(f"DELETE FROM {t}")
 
     print("Seeding cases...")
     case_ids = []
@@ -150,12 +157,13 @@ def seed():
         match_data = {
             "score": m["score"],
             "confidence": m["score"],
-            "engines_used": ["ArcFace", "DeepFace"],
+            "engines_used": ["demo-seed"],
             "sighting_id": sid,
+            "seeded": True,
         }
         conn.execute(
-            """INSERT INTO matches (id,case_id,sighting_id,score,match_data,created_at)
-               VALUES (?,?,?,?,?,?)""",
+            """INSERT INTO matches (id,case_id,sighting_id,score,match_data,created_at,status)
+               VALUES (?,?,?,?,?,?,'pending')""",
             (mid, cid, sid, m["score"], json.dumps(match_data), ts())
         )
         conn.execute(
@@ -174,4 +182,4 @@ def seed():
     print("\nAll sightings are in Varanasi / UP region — perfect for your IIT BHU demo.")
 
 if __name__ == "__main__":
-    seed()
+    seed(force="--force" in sys.argv)

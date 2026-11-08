@@ -4,12 +4,13 @@
 
 
 import { useState, useEffect, useRef } from "react";
+import api from "../api";
 
 const REFRESH_INTERVAL = 30_000; // 30 seconds
 
 /** Returns true if an action string is a "reveal" type event */
 function isRevealAction(action = "") {
-  const keywords = ["reveal", "identify", "expose", "unmasked", "id confirmed"];
+  const keywords = ["reveal", "identify", "expose", "unmasked", "id confirmed", "match_reviewed"];
   return keywords.some((kw) => action.toLowerCase().includes(kw));
 }
 
@@ -95,13 +96,13 @@ function AuditEntry({ entry, index }) {
       {/* Bottom row: user + timestamp */}
       <div className="flex items-center justify-between gap-2">
         <span
-          className="text-[11px] tracking-wide"
+          className="text-[11px] tracking-wide truncate min-w-0"
           style={{ color: reveal ? "#a02030" : "#404058" }}
         >
-          {entry.user ?? "Unknown"}
+          {entry.details ?? ""}
         </span>
         <span className="text-[10px] tabular-nums" style={{ color: "#2e2e42" }}>
-          {formatTime(entry.timestamp)}
+          {formatTime(entry.created_at)}
         </span>
       </div>
     </li>
@@ -122,12 +123,9 @@ export default function AuditLog() {
       else setLoading(true);
       setError(null);
 
-      const res = await fetch("/api/audit");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-
-      // Accept array directly or { entries: [] } shape
-      const raw = Array.isArray(data) ? data : (data.entries ?? []);
+      // Backend returns { log: [{ id, action, details, created_at }] }
+      const data = await api.getAudit(10);
+      const raw = data.log ?? [];
       setEntries(raw.slice(0, 10));
       setLastFetch(Date.now());
     } catch (err) {

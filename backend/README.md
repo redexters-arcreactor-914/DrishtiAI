@@ -13,7 +13,7 @@ python run_matcher.py \
   --reference  data/missing/john_doe.jpg \
   --sightings  data/sightings/ \
   --output     results/matches.json \
-  --threshold  0.6 \
+  --threshold  0.4 \
   --top-k      5
 ```
 
@@ -24,7 +24,7 @@ python run_matcher.py \
 ```python
 from face_matcher import FaceMatcher
 
-matcher = FaceMatcher(threshold=0.6, top_k=5)
+matcher = FaceMatcher(threshold=0.4, top_k=5)
 
 results = matcher.match(
     reference_image="data/missing/john_doe.jpg",

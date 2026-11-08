@@ -1,21 +1,46 @@
-import { useState, useRef } from "react";
-
-const API = "http://127.0.0.1:5000";
+import { useState, useEffect, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
+import api from "../api";
 
 export default function LiveMap() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const caseId = searchParams.get("case_id") || "";
   const [loading, setLoading]       = useState(true);
   const [error, setError]           = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const iframeRef = useRef(null);
+  const [cases, setCases]           = useState([]);
+  const [pointCount, setPointCount] = useState(null);
+  const [updatedAt, setUpdatedAt]   = useState(null);
 
-  const handleLoad  = () => setLoading(false);
-  const handleError = () => { setLoading(false); setError("Could not load map — is backend running?"); };
-  const refresh     = () => { setLoading(true); setError(null); setRefreshKey(k => k + 1); };
+  // An <iframe> never fires onError for HTTP/network failures, so probe the
+  // backend first and show a real error state if it is down.
+  const probe = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${api.mapUrl(caseId || null)}${caseId ? "&" : "?"}fmt=json`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setPointCount(data.total);
+      setRefreshKey(k => k + 1);
+    } catch (e) {
+      setLoading(false);
+      setError(`Could not load map — is the backend running? (${e.message})`);
+    }
+  }, [caseId]);
+
+  useEffect(() => { probe(); }, [probe]);
+  useEffect(() => { api.getCases().then(d => setCases(d.cases || [])).catch(() => {}); }, []);
+
+  const handleLoad = () => { setLoading(false); setUpdatedAt(new Date()); };
+  const refresh    = () => probe();
+  const onCase     = (e) => setSearchParams(e.target.value ? { case_id: e.target.value } : {});
 
   return (
     <div style={{
       display: "flex", flexDirection: "column",
-      width: "100%", height: "100vh",
+      width: "100%", height: "calc(100vh - 52px - 56px)", minHeight: 420,
+      border: "1px solid rgba(230,57,70,0.15)",
       background: "#0a0a0f",
       fontFamily: "'Courier New', Courier, monospace",
       overflow: "hidden",
@@ -42,7 +67,16 @@ export default function LiveMap() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <span style={{ color: "#4a4a5a", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>Feed: Active</span>
+          <select value={caseId} onChange={onCase} aria-label="Filter by case" style={{
+            background: "#0f0f18", color: "#a0a0b8", fontSize: 11, padding: "3px 8px",
+            border: "1px solid rgba(255,255,255,0.12)", fontFamily: "inherit", maxWidth: 260,
+          }}>
+            <option value="">All cases</option>
+            {cases.map(c => <option key={c.id} value={c.id}>{c.name} — #{c.id.slice(0, 8)}</option>)}
+          </select>
+          <span style={{ color: "#6a6a7a", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>
+            {pointCount === null ? "—" : `${pointCount} point${pointCount === 1 ? "" : "s"}`}
+          </span>
           <span style={{ color: "#e63946", fontSize: 11, letterSpacing: "0.15em", padding: "2px 8px", border: "1px solid #e63946", background: "rgba(230,57,70,0.08)" }}>LIVE</span>
           <button onClick={refresh} style={{
             color: "#e63946", fontSize: 11, letterSpacing: "0.1em",
@@ -112,13 +146,12 @@ export default function LiveMap() {
         )}
 
         {/* ── THE MAP — fills entire container ── */}
+        {refreshKey > 0 && !error && (
         <iframe
           key={refreshKey}
-          ref={iframeRef}
-          src={`${API}/api/map`}
+          src={api.mapUrl(caseId || null)}
           title="Live Sighting Map"
           onLoad={handleLoad}
-          onError={handleError}
           style={{
             position: "absolute",
             top: 0, left: 0,
@@ -129,6 +162,7 @@ export default function LiveMap() {
             transition: "opacity 0.6s ease",
           }}
         />
+        )}
       </div>
 
       {/* ── Footer ── */}
@@ -136,9 +170,11 @@ export default function LiveMap() {
         flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "6px 24px", background: "#0d0d14", borderTop: "1px solid rgba(230,57,70,0.15)",
       }}>
-        <span style={{ color: "#2a2a3a", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>Sys: Nominal</span>
-        <span style={{ color: "#2a2a3a", fontSize: 11, letterSpacing: "0.1em" }}>
-          {new Date().toLocaleTimeString("en-US", { hour12: false })} UTC
+        <span style={{ color: "#4a4a5a", fontSize: 11, letterSpacing: "0.15em", textTransform: "uppercase" }}>
+          {error ? "Sys: Offline" : "Sys: Nominal"}
+        </span>
+        <span style={{ color: "#4a4a5a", fontSize: 11, letterSpacing: "0.1em" }}>
+          {updatedAt ? `Updated ${updatedAt.toLocaleTimeString("en-IN", { hour12: false })}` : "—"}
         </span>
       </div>
 
