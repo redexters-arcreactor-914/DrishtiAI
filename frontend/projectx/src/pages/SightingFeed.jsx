@@ -144,7 +144,7 @@ function SightingCard({ s, idx, onMap }) {
         )}
         {warning && (
           <p className="text-xs font-mono m-0" style={{ color: "#a16207" }} title={warning}>
-            ⚠ {engine === "offline" ? "Gemini unavailable — used offline extractor" : warning}
+            ⚠ {engine === "offline" ? `Gemini unavailable — used offline extractor. Reason: ${warning.replace(/\s*—\s*used offline extractor$/, "")}` : warning}
           </p>
         )}
 
