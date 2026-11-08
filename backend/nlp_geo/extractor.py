@@ -64,6 +64,7 @@ except ImportError:
     log.warning("geopy not installed — online geocoding disabled.")
 
 _geo_cache: dict = {}
+_GEO_ERROR = object()  # sentinel: geocoder unreachable (stop trying more queries)
 _geo_lock = threading.Lock()
 _last_geo_call = 0.0
 
@@ -408,28 +409,38 @@ def _nominatim(query: str):
             r = _geocoder.geocode(query, country_codes="in")
             result = (round(r.latitude, 6), round(r.longitude, 6)) if r else None
         except Exception as e:
-            log.warning(f"Geocoding failed for '{query}': {e}")
-            return None  # don't cache transient errors
+            log.warning(f"Online geocoding failed for '{query}': {e}")
+            return _GEO_ERROR  # don't cache transient errors
         _geo_cache[query] = result
         return result
 
 
 def _geocode(loc: dict):
     """Resolve a location dict to (lat, lng). Tries most→least specific."""
-    parts = [loc.get("landmark"), loc.get("city"), loc.get("state")]
+    lm, city, state = loc.get("landmark"), loc.get("city"), loc.get("state")
+    candidates = [
+        (lm, city, state),
+        (lm, city),
+        (lm, state),
+        (city, state),
+        (city,),
+        (state,),
+    ]
     queries = []
-    full = ", ".join(p for p in parts if p)
-    if full:
-        queries.append(full)
-    city_state = ", ".join(p for p in parts[1:] if p)
-    if city_state and city_state != full:
-        queries.append(city_state)
+    for c in candidates:
+        q = ", ".join(p for p in c if p)
+        if q and q not in queries:
+            queries.append(q)
 
     for q in queries:
         hit = _nominatim(q)
+        if hit is _GEO_ERROR:
+            break  # network/geocoder problem — don't wait on every variant
         if hit:
             return hit
     hit = _gazetteer_lookup(loc)
+    if hit is None:
+        log.warning(f"Could not geocode location {loc} — sighting will not appear on the map")
     return hit if hit else (None, None)
 
 

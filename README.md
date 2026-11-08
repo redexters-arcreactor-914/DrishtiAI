@@ -50,6 +50,9 @@ python seed_data.py           # optional demo data
 python app.py                 # http://127.0.0.1:5000
 ```
 
+If sightings don't appear on the Live Map (they were saved while geocoding was
+failing), run `python regeocode.py` to fill in their coordinates.
+
 `GET /api/health` shows which face engines and NLP mode are active. Without
 DeepFace installed the matcher falls back to colour histograms — those results
 are flagged **low reliability** in the UI because they are not face recognition.

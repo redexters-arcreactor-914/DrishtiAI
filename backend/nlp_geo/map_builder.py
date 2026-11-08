@@ -17,9 +17,15 @@ import folium
 _PALETTE = ["#e63946", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7",
             "#06b6d4", "#ec4899", "#84cc16", "#f97316", "#14b8a6"]
 
-_DARK_TILES = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-_DARK_ATTR = ('&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
-              'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>')
+# Base maps that need no API key. (CARTO's basemaps now require a key and
+# render "API KEY REQUIRED" watermarks without one.)
+_DARK_TILES = ("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/"
+               "World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}")
+_DARK_LABELS = ("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/"
+                "World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}")
+_DARK_ATTR = "Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors"
+_OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+_OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 
 
 def _sort_key(p):
@@ -43,8 +49,12 @@ def generate_map_html(points: list, case_names: dict | None = None) -> str:
 
     m = folium.Map(location=center, zoom_start=zoom, tiles=None,
                    control_scale=True, prefer_canvas=True)
-    folium.TileLayer(_DARK_TILES, attr=_DARK_ATTR, name="Dark",
-                     subdomains="abcd", max_zoom=20).add_to(m)
+    folium.TileLayer(_DARK_TILES, attr=_DARK_ATTR, name="Dark", max_zoom=16,
+                     max_native_zoom=16).add_to(m)
+    folium.TileLayer(_OSM_TILES, attr=_OSM_ATTR, name="Street (OSM)", max_zoom=19,
+                     show=False).add_to(m)
+    folium.TileLayer(_DARK_LABELS, attr=_DARK_ATTR, name="Place names", overlay=True,
+                     control=True, max_zoom=16, max_native_zoom=16).add_to(m)
 
     by_case: dict = {}
     for p in pts:
@@ -87,8 +97,7 @@ def generate_map_html(points: list, case_names: dict | None = None) -> str:
                 tooltip=f"{escape(name)} · {location_name}",
             ).add_to(group)
 
-    if by_case:
-        folium.LayerControl(collapsed=False).add_to(m)
+    folium.LayerControl(collapsed=bool(not by_case)).add_to(m)
 
     if len(pts) > 1:
         lats = [p["latitude"] for p in pts]
